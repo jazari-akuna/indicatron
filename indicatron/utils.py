@@ -45,14 +45,17 @@ def validate_brightness(brightness):
     """
     if isinstance(brightness, str) and brightness.endswith('%'):
         try:
-            percentage = float(brightness.rstrip('%'))
-            brightness = int(percentage * 255 / 100)
+            percentage = float(brightness[:-1])
+            if 0 <= percentage <= 100:
+                return int(percentage * 255 / 100)
+            raise WLEDValueError(f"Brightness percentage must be between 0 and 100: {brightness}")
         except ValueError:
             raise WLEDValueError(f"Invalid brightness percentage: {brightness}")
     
     try:
         brightness = int(brightness)
-    except (ValueError, TypeError):
-        raise WLEDValueError(f"Brightness must be a number between 0 and 255: {brightness}")
-    
-    return max(0, min(255, brightness))
+        if 0 <= brightness <= 255:
+            return brightness
+        raise WLEDValueError(f"Brightness must be between 0 and 255: {brightness}")
+    except ValueError:
+        raise WLEDValueError(f"Invalid brightness value: {brightness}")
