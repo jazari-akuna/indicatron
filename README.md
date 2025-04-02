@@ -1,6 +1,6 @@
 # Indicatron
 
-A Python module to control WLED-powered LED strips for visualizing process states and progress.
+A Python module for controlling WLED-powered LED strips via WLED's JSON API and serial connections.
 
 ## Installation
 
@@ -8,23 +8,44 @@ A Python module to control WLED-powered LED strips for visualizing process state
 pip install indicatron
 ```
 
+## Features
+
+- Control WLED devices via HTTP or Serial connection
+- Set colors, brightness, and effects
+- Trigger built-in WLED effects with parameters
+- Create progress bar visualizations
+- Retrieve system information (temperature, WiFi details)
+- Full support for segment control
+
 ## Usage
-### Basic Usage
+
+### HTTP Connection
 
 ```python
 from indicatron import WLEDClient
 
-# Connect to a WLED device via HTTP
-client = WLEDClient.http("192.168.1.100")
+# Connect to WLED device via HTTP
+client = WLEDClient.http("192.168.1.100")  # Replace with your WLED IP address
 
-# Set the entire strip to green
-client.set_color("green")
+# Turn on the LEDs
+client.turn_on()
 
-# Create a progress bar (50% complete, blue color)
-client.progress_bar(50, "blue")
+# Set color to red
+client.set_color("red")
 
-# Turn off the strip
-client.clear()
+# Set a specific RGB color
+client.set_color((255, 100, 0))
+
+# Set brightness (0-255)
+client.set_brightness(128)
+
+# Set a built-in effect
+client.set_effect("Rainbow")
+
+# Get system information
+info = client.get_info()
+print(f"Temperature: {info.get('temperature')}°C")
+print(f"WiFi strength: {info.get('wifi', {}).get('signal')}%")
 ```
 
 ### Serial Connection
@@ -32,22 +53,53 @@ client.clear()
 ```python
 from indicatron import WLEDClient
 
-# Connect to a WLED device via Serial
-client = WLEDClient.serial("/dev/ttyUSB0", baudrate=115200)
+# Connect to WLED device via Serial
+client = WLEDClient.serial("/dev/ttyUSB0")  # Replace with your serial port
 
-# Set the strip to 75% brightness
-client.set_brightness(75)
+# Turn on the LEDs
+client.turn_on()
 
-# Advanced progress bar with moving block effect
-client.advanced_progress_bar(65, "#ff9900", mode=2)
+# Set color to blue
+client.set_color("blue")
+
+# Don't forget to close the serial connection when done
+client.close()
 ```
 
-## Features
+### Progress Bar Visualization
 
-* Set the entire strip to a single color
-* Adjust brightness
-* Simple progress bar mode
-* Advanced progress bar with special effects
-* Control WLED built-in lighting effects
-* Monitor system information (temperature, WiFi details)
-* Support for both HTTP and Serial connections
+```python
+from indicatron import WLEDClient
+import time
+
+client = WLEDClient.http("192.168.1.100")
+
+# Create a progress bar effect (0-100%)
+for i in range(101):
+    client.set_progress(i, color="green", background="black")
+    time.sleep(0.05)
+```
+
+### Advanced Features
+
+```python
+# Set advanced effect parameters
+client.set_effect("Chase", speed=150, intensity=200)
+
+# Create segments
+client.set_segment(0, 0, 49, color="red")    # First 50 LEDs red
+client.set_segment(1, 50, 99, color="green") # Next 50 LEDs green
+
+# Set color temperature (0-255 or Kelvin value 1900-10091)
+client.set_color_temperature(128)      # Mid-point (relative scale)
+client.set_color_temperature(4500)     # 4500K (absolute scale)
+```
+
+## Available Colors
+
+The following colors are available as string names:
+- red, green, blue, yellow, cyan, magenta, white, black
+- orange, purple, pink, brown, gray/grey, lime
+- indigo, violet, gold, silver
+
+You can also specify any color as an RGB tuple: (255, 0, 0)

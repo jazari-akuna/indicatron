@@ -1,221 +1,296 @@
 """
-Serial client implementation for WLED JSON API over Serial.
+Serial client for communicating with WLED devices.
 """
-
 import json
 import time
 import serial
-from .colors import parse_color
-from .exceptions import ConnectionError, CommandError
-
+from .colors import COLOR_MAP, WLED_EFFECTS, WLED_PALETTES
+from .exceptions import WLEDConnectionError, WLEDResponseError
+from .utils import resolve_color, validate_brightness
 
 class SerialClient:
     """
-    Client for controlling WLED devices using the Serial JSON API.
+    Client for communicating with WLED devices using Serial.
     """
     
     def __init__(self, port, baudrate=115200):
         """
-        Initialize Serial client.
+        Initialize a new SerialClient.
         
         Args:
-            port (str): Serial port (e.g., '/dev/ttyUSB0', 'COM3')
-            baudrate (int, optional): Baud rate. Defaults to 115200.
+            port: The serial port to use
+            baudrate: The baudrate to use (default: 115200)
         """
         try:
-            self.serial = serial.Serial(port, baudrate, timeout=2)
-            # Give the connection a moment to stabilize
-            time.sleep(0.5)
-            
+            self.serial = serial.Serial(port, baudrate, timeout=1)
             # Clear any pending data
             self.serial.reset_input_buffer()
             self.serial.reset_output_buffer()
-            
-            # Try to get info to verify connection
-            self.get_info()
+            time.sleep(0.1)  # Give serial connection time to stabilize
+            # Get initial LED count
+            self.led_count = None
+            self._fetch_led_count()
         except serial.SerialException as e:
-            raise ConnectionError(f"Could not connect to WLED device at {port}: {e}")
-
-    def _send_command(self, data):
-        """Send a command to the WLED device over serial."""
+            raise WLEDConnectionError(f"Error connecting to WLED device on {port}: {e}")
+    
+    def _fetch_led_count(self):
+        """
+        Fetch the number of LEDs from the device.
+        """
         try:
-            # Convert to JSON and add newline
-            json_data = json.dumps(data) + "\n"
-            self.serial.write(json_data.encode())
+            info = self.get_info()
+            self.led_count = info.get('leds', {}).get('count', 0)
+        except Exception:
+            # Default to 30 if unable to fetch
+            self.led_count = 30
+    
+    def _send_command(self, data, read_response=True):
+        """
+        Send a command to the WLED device.
+        
+        Args:
+            data: The data to send
+            read_response: Whether to read a response from the device
             
-            # Wait for a response (WLED sends "OK" or error message)
-            response = self.serial.readline().decode().strip()
+        Returns:
+            Response from the device or None if read_response is False
             
-            if not response.startswith("OK"):
-                raise CommandError(f"Command failed: {response}")
-            
-            return True
-        except serial.SerialException as e:
-            raise CommandError(f"Serial communication error: {e}")
-
-    def _get_data(self, command):
-        """Get data from the WLED device over serial."""
+        Raises:
+            WLEDConnectionError: If there's an error communicating with the device
+            WLEDResponseError: If there's an error in the response from the device
+        """
         try:
-            # Clear buffer
-            self.serial.reset_input_buffer()
+            # Encode the command as JSON and add a newline
+            command = json.dumps(data) + '\n'
+            self.serial.write(command.encode('utf-8'))
             
-            # Send the info command
-            self.serial.write((command + "\n").encode())
+            if not read_response:
+                return None
             
-            # Read response (may be multiple lines for complex data)
-            response = ""
-            start_time = time.time()
-            
-            # Read with timeout
-            while time.time() - start_time < 2:
-                if self.serial.in_waiting:
-                    line = self.serial.readline().decode()
-                    response += line
-                    
-                    # Check if we've received complete JSON
-                    try:
-                        json.loads(response)
-                        break
-                    except json.JSONDecodeError:
-                        # Not complete yet, continue reading
-                        continue
-                else:
-                    time.sleep(0.1)
+            # Read the response
+            response = self.serial.readline().decode('utf-8').strip()
+            if not response:
+                return {}
             
             try:
                 return json.loads(response)
-            except json.JSONDecodeError:
-                raise CommandError(f"Invalid JSON response: {response}")
-                
+            except json.JSONDecodeError as e:
+                raise WLEDResponseError(f"Error decoding response from WLED device: {e}")
         except serial.SerialException as e:
-            raise CommandError(f"Serial communication error: {e}")
-
-    def set_color(self, color):
-        """Set the entire strip to a single color."""
-        rgb = parse_color(color)
-        data = {"seg": [{"col": [rgb]}], "on": True}
-        return self._send_command(data)
-
+            raise WLEDConnectionError(f"Error communicating with WLED device: {e}")
+    
+    def get_state(self):
+        """
+        Get the current state of the WLED device.
+        
+        Returns:
+            Current state of the device
+        """
+        return self._send_command({"v": True}).get("state", {})
+    
+    def get_info(self):
+        """
+        Get information about the WLED device.
+        
+        Returns:
+            Information about the device
+        """
+        response = self._send_command({"v": True})
+        info = response.get("info", {})
+        # Update LED count
+        self.led_count = info.get('leds', {}).get('count', self.led_count)
+        return info
+    
+    def turn_on(self):
+        """
+        Turn the WLED device on.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"on": True})
+    
+    def turn_off(self):
+        """
+        Turn the WLED device off.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"on": False})
+    
+    def toggle(self):
+        """
+        Toggle the WLED device on/off.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"T": 1})
+    
     def set_brightness(self, brightness):
-        """Set the brightness of the LED strip."""
-        if not 0 <= brightness <= 255:
-            raise ValueError("Brightness must be between 0 and 255")
+        """
+        Set the brightness of the WLED device.
         
-        data = {"bri": brightness, "on": True if brightness > 0 else False}
-        return self._send_command(data)
-
-    def progress_bar(self, progress, color, reverse=False):
-        """Display a simple progress bar."""
-        if not 0 <= progress <= 100:
-            raise ValueError("Progress must be between 0 and 100")
-        
-        rgb = parse_color(color)
-        
-        # First get the strip info to determine LED count
-        info = self.get_info()
-        leds = info.get("leds", {}).get("count", 30)  # Default to 30 if count not found
-        
-        # Calculate how many LEDs to light up
-        segments_on = int((progress / 100) * leds)
-        
-        if segments_on == 0 and progress > 0:
-            segments_on = 1  # Show at least one LED for non-zero progress
-        
-        # We need to create a segment array with specific colors for each LED
-        segment_data = []
-        
-        for i in range(leds):
-            if (not reverse and i < segments_on) or (reverse and i >= leds - segments_on):
-                segment_data.append(rgb)
-            else:
-                segment_data.append([0, 0, 0])  # Off
-        
-        # Send command to set the LEDs
-        data = {
-            "on": True,
-            "seg": [{
-                "i": segment_data
-            }]
-        }
-        
-        return self._send_command(data)
-
-    def advanced_progress_bar(self, progress, color, start_pct=0, mode=1):
-        """Display an advanced progress bar with effects."""
-        if not 0 <= progress <= 100 or not 0 <= start_pct <= 100:
-            raise ValueError("Progress and start_pct must be between 0 and 100")
-        
-        if not 1 <= mode <= 2:
-            raise ValueError("Mode must be 1 or 2")
-        
-        rgb = parse_color(color)
-        
-        # Get the current strip info to determine LED count
-        info = self.get_info()
-        leds = info.get("leds", {}).get("count", 30)  # Default to 30 if count not found
-        
-        # Calculate LED positions
-        start_led = int((start_pct / 100) * leds)
-        end_led = int((progress / 100) * leds)
-        
-        if mode == 1:  # Simple mode - just light up the segment
-            # Create an array of LED colors
-            segment_data = []
+        Args:
+            brightness: The brightness to set (0-255)
             
-            for i in range(leds):
-                if start_led <= i < end_led:
-                    segment_data.append(rgb)
-                else:
-                    segment_data.append([0, 0, 0])  # Off
-            
-            data = {
-                "on": True,
-                "seg": [{
-                    "i": segment_data
-                }]
-            }
-        else:  # Mode 2 - "falling blocks" effect
-            # For mode 2 over serial, we'll simulate the effect by using built-in effects
-            data = {
-                "on": True,
-                "seg": [{
-                    "fx": 20,  # Meteor effect
-                    "sx": 200,  # Speed
-                    "ix": end_led * 8,  # Size based on progress
-                    "col": [rgb]
-                }]
-            }
+        Returns:
+            Response from the device
+        """
+        brightness = validate_brightness(brightness)
+        return self._send_command({"bri": brightness})
+    
+    def set_color(self, color):
+        """
+        Set the color of the WLED device.
         
-        return self._send_command(data)
-
-    def clear(self):
-        """Turn off all LEDs and clear effects."""
-        data = {"on": False}
-        return self._send_command(data)
-
-    def power(self, state=True):
-        """Power the LED strip on or off."""
-        data = {"on": state}
-        return self._send_command(data)
-
-    def effect(self, effect_id, speed=128, intensity=128):
-        """Activate a built-in WLED effect."""
+        Args:
+            color: The color to set (name or RGB tuple)
+            
+        Returns:
+            Response from the device
+        """
+        rgb = resolve_color(color)
+        return self._send_command({"seg": [{"col": [rgb]}]})
+    
+    def set_effect(self, effect_name, speed=128, intensity=128, palette=None):
+        """
+        Set the effect of the WLED device.
+        
+        Args:
+            effect_name: The name of the effect
+            speed: The speed of the effect (0-255, default 128)
+            intensity: The intensity of the effect (0-255, default 128)
+            palette: The palette to use (name)
+            
+        Returns:
+            Response from the device
+        """
+        if effect_name.isdigit():
+            effect_id = int(effect_name)
+        else:
+            effect_name = effect_name.lower()
+            if effect_name not in WLED_EFFECTS:
+                raise ValueError(f"Unknown effect: {effect_name}")
+            effect_id = WLED_EFFECTS[effect_name]
+        
         data = {
             "seg": [{
                 "fx": effect_id,
                 "sx": speed,
                 "ix": intensity
-            }],
-            "on": True
+            }]
+        }
+        
+        if palette:
+            if palette.isdigit():
+                palette_id = int(palette)
+            else:
+                palette = palette.lower()
+                if palette not in WLED_PALETTES:
+                    raise ValueError(f"Unknown palette: {palette}")
+                palette_id = WLED_PALETTES[palette]
+            
+            data["seg"][0]["pal"] = palette_id
+        
+        return self._send_command(data)
+    
+    def show_progress(self, percentage, color="red", background="black"):
+        """
+        Show a progress bar effect using LEDs.
+        
+        Args:
+            percentage: The percentage to show (0-100)
+            color: The color of the progress bar
+            background: The background color
+            
+        Returns:
+            Response from the device
+        """
+        if not self.led_count:
+            self._fetch_led_count()
+        
+        percentage = max(0, min(100, percentage))
+        active_leds = int(self.led_count * percentage / 100)
+        
+        # Create a segment for the entire strip with background color
+        fg_color = resolve_color(color)
+        bg_color = resolve_color(background)
+        
+        # If percentage is 0, all background
+        if percentage == 0:
+            return self._send_command({
+                "seg": [{
+                    "id": 0,
+                    "start": 0,
+                    "stop": self.led_count,
+                    "col": [bg_color],
+                    "fx": 0  # Static effect
+                }]
+            })
+        
+        # If percentage is 100, all foreground
+        if percentage == 100:
+            return self._send_command({
+                "seg": [{
+                    "id": 0,
+                    "start": 0,
+                    "stop": self.led_count,
+                    "col": [fg_color],
+                    "fx": 0  # Static effect
+                }]
+            })
+        
+        # Otherwise split into two segments
+        return self._send_command({
+            "seg": [
+                {
+                    "id": 0,
+                    "start": 0,
+                    "stop": active_leds,
+                    "col": [fg_color],
+                    "fx": 0  # Static effect
+                },
+                {
+                    "id": 1,
+                    "start": active_leds,
+                    "stop": self.led_count,
+                    "col": [bg_color],
+                    "fx": 0  # Static effect
+                }
+            ]
+        })
+    
+    def set_color_temperature(self, temperature):
+        """
+        Set the color temperature of the WLED device.
+        
+        Args:
+            temperature: Either a relative value (0-255) where 0 is warmest and 255 is coldest,
+                        or an absolute Kelvin value (1900-10091)
+        
+        Returns:
+            Response from the device
+        """
+        # Ensure temperature is within valid range
+        if temperature <= 255:
+            # Relative value
+            temperature = max(0, min(255, temperature))
+        else:
+            # Kelvin value
+            temperature = max(1900, min(10091, temperature))
+        
+        data = {
+            "seg": [{
+                "cct": temperature
+            }]
         }
         return self._send_command(data)
-
-    def get_info(self):
-        """Get system information from the WLED device."""
-        # In serial mode, we need to send "info" command
-        return self._get_data("info")
     
-    def __del__(self):
-        """Cleanup when the object is deleted."""
-        if hasattr(self, 'serial') and self.serial.is_open:
+    def close(self):
+        """
+        Close the serial connection.
+        """
+        if self.serial and self.serial.is_open:
             self.serial.close()

@@ -1,65 +1,130 @@
 """
-Color definitions and conversions for WLED.
+Color definitions and mappings for the Indicatron module.
 """
 
-# Predefined colors as RGB values
-COLORS = {
+# A mapping of color names to RGB values
+COLOR_MAP = {
     "red": (255, 0, 0),
     "green": (0, 255, 0),
     "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+    "purple": (128, 0, 128),
+    "cyan": (0, 255, 255),
     "white": (255, 255, 255),
     "black": (0, 0, 0),
-    "yellow": (255, 255, 0),
-    "cyan": (0, 255, 255),
-    "magenta": (255, 0, 255),
     "orange": (255, 165, 0),
-    "purple": (128, 0, 128),
     "pink": (255, 192, 203),
-    "teal": (0, 128, 128),
-    "lime": (0, 255, 0),
-    "brown": (165, 42, 42),
-    "navy": (0, 0, 128),
-    "olive": (128, 128, 0),
 }
 
+# List of built-in WLED effects
+WLED_EFFECTS = {
+    "solid": 0,
+    "blink": 1,
+    "breathe": 2,
+    "wipe": 3,
+    "fade": 4,
+    "scan": 5,
+    "dual_scan": 6,
+    "flash": 7,
+    "chase": 8,
+    "chase_rainbow": 9,
+    "rainbow": 10,
+    "theater_chase": 11,
+    "theater_chase_rainbow": 12,
+    "running_lights": 13,
+    "twinkle": 14,
+    "twinkle_random": 15,
+    "twinkle_fade": 16,
+    "twinkle_fade_random": 17,
+    "sparkle": 18,
+    "flash_sparkle": 19,
+    "hyper_sparkle": 20,
+    "strobe": 21,
+    "strobe_rainbow": 22,
+    "multi_strobe": 23,
+    "blink_rainbow": 24,
+    "chase_white": 25,
+    "chase_color": 26,
+    "chase_random": 27,
+    "chase_rainbow_white": 28,
+    "chase_blackout": 29,
+    "chase_blackout_rainbow": 30,
+    "color_sweep_random": 31,
+    "running_color": 32,
+    "running_red_blue": 33,
+    "running_random": 34,
+    "larson_scanner": 35,
+    "comet": 36,
+    "fireworks": 37,
+    "fireworks_random": 38,
+    "merry_christmas": 39,
+    "fire_flicker": 40,
+    "fire_flicker_soft": 41,
+    "fire_flicker_intense": 42,
+    "circus_combustus": 43,
+    "halloween": 44,
+    "bicolor_chase": 45,
+    "tricolor_chase": 46,
+    "twinklefox": 47,
+    "rain": 48,
+    "meteor": 49,
+    "meteor_smooth": 50,
+    "railway": 51,
+    "ripple": 52,
+}
 
-def parse_color(color):
-    """
-    Parse a color value from various formats into RGB tuple.
-    
-    Args:
-        color (str or tuple): Either a color name, hex code, or RGB tuple
-        
-    Returns:
-        tuple: RGB values as (r, g, b)
-        
-    Examples:
-        >>> parse_color("red")
-        (255, 0, 0)
-        >>> parse_color("#FF0000")
-        (255, 0, 0)
-        >>> parse_color((255, 0, 0))
-        (255, 0, 0)
-    """
-    if isinstance(color, tuple) and len(color) == 3:
-        return color
-    
-    if isinstance(color, str):
-        # Check if it's a predefined color name
-        if color.lower() in COLORS:
-            return COLORS[color.lower()]
-        
-        # Check if it's a hex color code
-        if color.startswith('#') and len(color) in (4, 7):
-            color = color.lstrip('#')
-            if len(color) == 3:
-                color = ''.join(c + c for c in color)
-            return tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
-    
-    # If we get here, the color format is invalid
-    raise ValueError(f"Invalid color format: {color}. Use color name, hex (e.g., #FF0000), or RGB tuple.")
-
-
-def rgb_to_hex(rgb):
-    """Convert RGB tuple to hex color string."""
-    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+# List of built-in WLED palettes
+WLED_PALETTES = {
+    "default": 0,
+    "random_cycle": 1,
+    "primary_color": 2,
+    "based_on_primary": 3,
+    "set_colors": 4,
+    "primary_three_colors": 5,
+    "static": 6,
+    "tricolor_fade": 7,
+    "party": 8,
+    "cloud": 9,
+    "lava": 10,
+    "ocean": 11,
+    "forest": 12,
+    "rainbow": 13,
+    "rainbow_stripes": 14,
+    "sunset": 15,
+    "rivendell": 16,
+    "breeze": 17,
+    "red_and_blues": 18,
+    "yellowout": 19,
+    "analogous": 20,
+    "splash": 21,
+    "pastel": 22,
+    "sunset_real": 23,
+    "beech": 24,
+    "vintage": 25,
+    "departure": 26,
+    "landscape": 27,
+    "beach": 28,
+    "sherbet": 29,
+    "hult": 30,
+    "hult_64": 31,
+    "drywet": 32,
+    "jul": 33,
+    "grintage": 34,
+    "rewhi": 35,
+    "tertiary": 36,
+    "fire": 37,
+    "icefire": 38,
+    "cyane": 39,
+    "light_pink": 40,
+    "autumn": 41,
+    "magenta": 42,
+    "magred": 43,
+    "yelmag": 44,
+    "yelblu": 45,
+    "orange_teal": 46,
+    "brewsky": 47,
+    "retro_clown": 48,
+    "candy": 49,
+    "tiamat": 50,
+    "april_night": 51,
+}

@@ -1,228 +1,280 @@
 """
-HTTP client implementation for WLED JSON API.
+HTTP client for communicating with WLED devices.
 """
-
 import json
 import requests
-from .colors import parse_color
-from .exceptions import ConnectionError, CommandError
-
+from .colors import COLOR_MAP, WLED_EFFECTS, WLED_PALETTES
+from .exceptions import WLEDConnectionError, WLEDResponseError
+from .utils import resolve_color, validate_brightness
 
 class HTTPClient:
     """
-    Client for controlling WLED devices using the HTTP JSON API.
+    Client for communicating with WLED devices using HTTP.
     """
     
-    def __init__(self, host, port=80, use_ssl=False):
+    def __init__(self, host, port=80):
         """
-        Initialize HTTP client.
+        Initialize a new HTTPClient.
         
         Args:
-            host (str): Hostname or IP address of the WLED device
-            port (int, optional): Port number. Defaults to 80.
-            use_ssl (bool, optional): Whether to use HTTPS. Defaults to False.
+            host: The hostname or IP address of the WLED device
+            port: The port number (default: 80)
         """
-        protocol = "https" if use_ssl else "http"
-        self.base_url = f"{protocol}://{host}:{port}/json"
-        self.session = requests.Session()
+        self.host = host
+        self.port = port
+        self.api_url = f"http://{host}:{port}/json"
+        self.led_count = None
+        # Get initial LED count
+        self._fetch_led_count()
+    
+    def _fetch_led_count(self):
+        """
+        Fetch the number of LEDs from the device.
+        """
+        try:
+            info = self.get_info()
+            self.led_count = info.get('leds', {}).get('count', 0)
+        except Exception:
+            # Default to 30 if unable to fetch
+            self.led_count = 30
+    
+    def _send_command(self, data, endpoint="state"):
+        """
+        Send a command to the WLED device.
         
-        # Test the connection
+        Args:
+            data: The data to send
+            endpoint: The API endpoint ('state' or 'info')
+            
+        Returns:
+            Response from the device
+            
+        Raises:
+            WLEDConnectionError: If there's an error connecting to the device
+            WLEDResponseError: If there's an error in the response from the device
+        """
+        url = f"{self.api_url}/{endpoint}"
+        
         try:
-            self.get_info()
-        except requests.RequestException as e:
-            raise ConnectionError(f"Could not connect to WLED device at {self.base_url}: {e}")
-
-    def _send_command(self, endpoint, data):
-        """Send a command to the WLED device."""
-        try:
-            url = f"{self.base_url}/{endpoint}"
-            response = self.session.post(url, json=data)
+            response = requests.post(url, json=data)
             response.raise_for_status()
-            return response.json() if response.text.strip() else {}
-        except requests.RequestException as e:
-            raise CommandError(f"Command failed: {e}")
-
-    def _get_data(self, endpoint):
-        """Get data from the WLED device."""
+            return response.json() if response.content else {}
+        except requests.exceptions.RequestException as e:
+            raise WLEDConnectionError(f"Error connecting to WLED device at {url}: {e}")
+        except json.JSONDecodeError as e:
+            raise WLEDResponseError(f"Error decoding response from WLED device: {e}")
+    
+    def get_state(self):
+        """
+        Get the current state of the WLED device.
+        
+        Returns:
+            Current state of the device
+        """
         try:
-            url = f"{self.base_url}/{endpoint}"
-            response = self.session.get(url)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            raise CommandError(f"Data retrieval failed: {e}")
-
-    def set_color(self, color):
-        """Set the entire strip to a single color."""
-        rgb = parse_color(color)
-        data = {
-            "seg": [
-                {"col": [rgb, [0, 0, 0], [0, 0, 0]], "fx": 0, "sx": 128, "ix": 128}
-            ],
-            "on": True
-        }
-        return self._send_command("state", data)
-
+            return requests.get(f"{self.api_url}/state").json()
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            raise WLEDConnectionError(f"Error getting WLED state: {e}")
+    
+    def get_info(self):
+        """
+        Get information about the WLED device.
+        
+        Returns:
+            Information about the device
+        """
+        try:
+            response = requests.get(f"{self.api_url}/info")
+            info = response.json()
+            # Update LED count
+            self.led_count = info.get('leds', {}).get('count', self.led_count)
+            return info
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            raise WLEDConnectionError(f"Error getting WLED info: {e}")
+    
+    def turn_on(self):
+        """
+        Turn the WLED device on.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"on": True})
+    
+    def turn_off(self):
+        """
+        Turn the WLED device off.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"on": False})
+    
+    def toggle(self):
+        """
+        Toggle the WLED device on/off.
+        
+        Returns:
+            Response from the device
+        """
+        return self._send_command({"T": 1})
+    
     def set_brightness(self, brightness):
-        """Set the brightness of the LED strip."""
-        if not 0 <= brightness <= 255:
-            raise ValueError("Brightness must be between 0 and 255")
+        """
+        Set the brightness of the WLED device.
         
-        data = {"bri": brightness, "on": True if brightness > 0 else False}
-        return self._send_command("state", data)
-
-    def progress_bar(self, progress, color, reverse=False):
-        """Display a simple progress bar."""
-        if not 0 <= progress <= 100:
-            raise ValueError("Progress must be between 0 and 100")
+        Args:
+            brightness: The brightness to set (0-255)
+            
+        Returns:
+            Response from the device
+        """
+        brightness = validate_brightness(brightness)
+        return self._send_command({"bri": brightness})
+    
+    def set_color(self, color):
+        """
+        Set the color of the WLED device.
         
-        rgb = parse_color(color)
+        Args:
+            color: The color to set (name or RGB tuple)
+            
+        Returns:
+            Response from the device
+        """
+        rgb = resolve_color(color)
+        return self._send_command({"seg": [{"col": [rgb]}]})
+    
+    def set_effect(self, effect_name, speed=128, intensity=128, palette=None):
+        """
+        Set the effect of the WLED device.
         
-        # We'll use a segment to create the progress bar
-        data = {"on": True, "bri": 255}
-        
-        # Get the current strip info to determine LED count
-        info = self.get_info()
-        leds = info.get("leds", {}).get("count", 30)  # Default to 30 if count not found
-        
-        # Calculate how many LEDs to light up
-        segments_on = int((progress / 100) * leds)
-        
-        if segments_on == 0 and progress > 0:
-            segments_on = 1  # Show at least one LED for non-zero progress
-        
-        # Create a segment effect
-        if reverse:
-            # Start from the end, we need to adjust the stop position
-            stop = leds
-            start = leds - segments_on
+        Args:
+            effect_name: The name of the effect
+            speed: The speed of the effect (0-255, default 128)
+            intensity: The intensity of the effect (0-255, default 128)
+            palette: The palette to use (name)
+            
+        Returns:
+            Response from the device
+        """
+        if effect_name.isdigit():
+            effect_id = int(effect_name)
         else:
-            # Start from the beginning
-            start = 0
-            stop = segments_on
+            effect_name = effect_name.lower()
+            if effect_name not in WLED_EFFECTS:
+                raise ValueError(f"Unknown effect: {effect_name}")
+            effect_id = WLED_EFFECTS[effect_name]
         
-        data["seg"] = [
-            {
-                "id": 0,
-                "start": start,
-                "stop": stop,
-                "col": [rgb, [0, 0, 0], [0, 0, 0]],
-                "fx": 0,  # Solid color effect
-                "sx": 128,
-                "ix": 128,
-                "on": True
-            }
-        ]
-        
-        if segments_on < leds:
-            # Add a second segment for the "off" part
-            off_seg = {
-                "id": 1,
-                "start": stop,
-                "stop": leds if not reverse else start,
-                "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],  # All off
-                "fx": 0,
-                "on": True
-            }
-            data["seg"].append(off_seg)
-        
-        return self._send_command("state", data)
-
-    def advanced_progress_bar(self, progress, color, start_pct=0, mode=1):
-        """Display an advanced progress bar with effects."""
-        if not 0 <= progress <= 100 or not 0 <= start_pct <= 100:
-            raise ValueError("Progress and start_pct must be between 0 and 100")
-        
-        if not 1 <= mode <= 2:
-            raise ValueError("Mode must be 1 or 2")
-        
-        rgb = parse_color(color)
-        
-        # Get the current strip info to determine LED count
-        info = self.get_info()
-        leds = info.get("leds", {}).get("count", 30)  # Default to 30 if count not found
-        
-        # Calculate LED positions
-        start_led = int((start_pct / 100) * leds)
-        end_led = int((progress / 100) * leds)
-        
-        if mode == 1:  # Simple mode - just light up the segment
-            data = {
-                "on": True,
-                "bri": 255,
-                "seg": [
-                    {
-                        "id": 0,
-                        "start": 0,
-                        "stop": start_led,
-                        "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                        "fx": 0,
-                        "on": True
-                    },
-                    {
-                        "id": 1,
-                        "start": start_led,
-                        "stop": end_led,
-                        "col": [rgb, [0, 0, 0], [0, 0, 0]],
-                        "fx": 0,
-                        "on": True
-                    },
-                    {
-                        "id": 2,
-                        "start": end_led,
-                        "stop": leds,
-                        "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                        "fx": 0,
-                        "on": True
-                    }
-                ]
-            }
-        else:  # Mode 2 - "falling blocks" effect
-            # For mode 2, we'll use the "Meteor" effect with custom settings
-            data = {
-                "on": True,
-                "bri": 255,
-                "seg": [
-                    {
-                        "id": 0,
-                        "start": 0,
-                        "stop": leds,
-                        "col": [rgb, [0, 0, 0], [0, 0, 0]],
-                        "fx": 20,  # Meteor effect
-                        "sx": 200,  # Speed - faster
-                        "ix": end_led * 8,  # Size of the meteor based on progress
-                        "pal": 0,
-                        "on": True
-                    }
-                ]
-            }
-        
-        return self._send_command("state", data)
-
-    def clear(self):
-        """Turn off all LEDs and clear effects."""
-        data = {"on": False}
-        return self._send_command("state", data)
-
-    def power(self, state=True):
-        """Power the LED strip on or off."""
-        data = {"on": state}
-        return self._send_command("state", data)
-
-    def effect(self, effect_id, speed=128, intensity=128):
-        """Activate a built-in WLED effect."""
         data = {
+            "seg": [{
+                "fx": effect_id,
+                "sx": speed,
+                "ix": intensity
+            }]
+        }
+        
+        if palette:
+            if palette.isdigit():
+                palette_id = int(palette)
+            else:
+                palette = palette.lower()
+                if palette not in WLED_PALETTES:
+                    raise ValueError(f"Unknown palette: {palette}")
+                palette_id = WLED_PALETTES[palette]
+            
+            data["seg"][0]["pal"] = palette_id
+        
+        return self._send_command(data)
+    
+    def show_progress(self, percentage, color="red", background="black"):
+        """
+        Show a progress bar effect using LEDs.
+        
+        Args:
+            percentage: The percentage to show (0-100)
+            color: The color of the progress bar
+            background: The background color
+            
+        Returns:
+            Response from the device
+        """
+        if not self.led_count:
+            self._fetch_led_count()
+        
+        percentage = max(0, min(100, percentage))
+        active_leds = int(self.led_count * percentage / 100)
+        
+        # Create a segment for the entire strip with background color
+        fg_color = resolve_color(color)
+        bg_color = resolve_color(background)
+        
+        # If percentage is 0, all background
+        if percentage == 0:
+            return self._send_command({
+                "seg": [{
+                    "id": 0,
+                    "start": 0,
+                    "stop": self.led_count,
+                    "col": [bg_color],
+                    "fx": 0  # Static effect
+                }]
+            })
+        
+        # If percentage is 100, all foreground
+        if percentage == 100:
+            return self._send_command({
+                "seg": [{
+                    "id": 0,
+                    "start": 0,
+                    "stop": self.led_count,
+                    "col": [fg_color],
+                    "fx": 0  # Static effect
+                }]
+            })
+        
+        # Otherwise split into two segments
+        return self._send_command({
             "seg": [
                 {
-                    "fx": effect_id,
-                    "sx": speed,
-                    "ix": intensity
+                    "id": 0,
+                    "start": 0,
+                    "stop": active_leds,
+                    "col": [fg_color],
+                    "fx": 0  # Static effect
+                },
+                {
+                    "id": 1,
+                    "start": active_leds,
+                    "stop": self.led_count,
+                    "col": [bg_color],
+                    "fx": 0  # Static effect
                 }
-            ],
-            "on": True
+            ]
+        })
+    
+    def set_color_temperature(self, temperature):
+        """
+        Set the color temperature of the WLED device.
+        
+        Args:
+            temperature: Either a relative value (0-255) where 0 is warmest and 255 is coldest,
+                        or an absolute Kelvin value (1900-10091)
+        
+        Returns:
+            Response from the device
+        """
+        # Ensure temperature is within valid range
+        if temperature <= 255:
+            # Relative value
+            temperature = max(0, min(255, temperature))
+        else:
+            # Kelvin value
+            temperature = max(1900, min(10091, temperature))
+        
+        data = {
+            "seg": [{
+                "cct": temperature
+            }]
         }
-        return self._send_command("state", data)
-
-    def get_info(self):
-        """Get system information from the WLED device."""
-        return self._get_data("")  # Root endpoint returns full info
+        return self._send_command(data)

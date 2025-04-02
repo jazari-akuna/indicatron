@@ -1,18 +1,19 @@
 """
-Exception classes for the Indicatron module.
+Exceptions for the Indicatron module.
 """
 
-
-class IndicatronError(Exception):
-    """Base exception for all Indicatron errors."""
+class WLEDError(Exception):
+    """Base exception for WLED errors."""
     pass
 
-
-class ConnectionError(IndicatronError):
-    """Raised when a connection to the WLED device fails."""
+class WLEDConnectionError(WLEDError):
+    """Error connecting to a WLED device."""
     pass
 
+class WLEDResponseError(WLEDError):
+    """Error in the response from a WLED device."""
+    pass
 
-class CommandError(IndicatronError):
-    """Raised when a command to the WLED device fails."""
+class WLEDValueError(WLEDError):
+    """Error in a value passed to a WLED function."""
     pass
